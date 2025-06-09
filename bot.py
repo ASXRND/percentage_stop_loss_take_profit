@@ -386,6 +386,9 @@ class SymbolAnalyzer:
             risk_percent = ((entry_price - sl) / entry_price) * 100
             reward_percent = ((tp - entry_price) / entry_price) * 100
             rr_ratio = reward_percent / risk_percent if risk_percent > 0 else 0
+            # Новое: предположительное движение цены
+            move_percent = ((tp - entry_price) / entry_price) * 100
+            move_note = f"\n<b>Потенциальное движение:</b> +{move_percent:.2f}%"
             
             # Определяем качество сигнала
             signal_quality = "🟢 СИЛЬНЫЙ" if len(confirmations) >= 3 else "🟡 СРЕДНИЙ" if len(confirmations) >= 2 else "🔴 СЛАБЫЙ"
@@ -402,6 +405,7 @@ class SymbolAnalyzer:
                 f"💰 <b>Цена входа</b>: {entry_price:.6f}\n"
                 f"🛑 <b>Стоп-лосс</b>: {sl:.6f} (-{risk_percent:.2f}%)\n"
                 f"🎯 <b>Тейк-профит</b>: {tp:.6f} (+{reward_percent:.2f}%)\n"
+                f"⚡️ {move_note}\n"
                 f"⚖️ <b>R/R соотношение</b>: 1:{rr_ratio:.2f}\n\n"
                 f"📊 <b>Техническое обоснование</b>:\n"
                 f"- MACD пересечение сигнальной линии ↗️\n"
@@ -446,6 +450,8 @@ class SymbolAnalyzer:
             risk_percent = ((sl - entry_price) / entry_price) * 100
             reward_percent = ((entry_price - tp) / entry_price) * 100
             rr_ratio = reward_percent / risk_percent if risk_percent > 0 else 0
+            move_percent = ((tp - entry_price) / entry_price) * 100
+            move_note = f"\n<b>Потенциальное движение:</b> {move_percent:.2f}%"
             
             # Определяем качество сигнала
             signal_quality = "🟢 СИЛЬНЫЙ" if len(confirmations) >= 3 else "🟡 СРЕДНИЙ" if len(confirmations) >= 2 else "🔴 СЛАБЫЙ"
@@ -461,7 +467,8 @@ class SymbolAnalyzer:
                 f"{time_note}\n\n"
                 f"💰 <b>Цена входа</b>: {entry_price:.6f}\n"
                 f"🛑 <b>Стоп-лосс</b>: {sl:.6f} (+{risk_percent:.2f}%)\n"
-                f"🎯 <b>Тейк-профит</b>: {tp:.6f} (-{reward_percent:.2f}%)\n"
+                f"🎯 <b>Тейк-профит</b>: {tp:.6f} ({move_percent:.2f}%)\n"
+                f"⚡️ {move_note}\n"
                 f"⚖️ <b>R/R соотношение</b>: 1:{rr_ratio:.2f}\n\n"
                 f"📊 <b>Техническое обоснование</b>:\n"
                 f"- MACD пересечение сигнальной линии ↘️\n"
