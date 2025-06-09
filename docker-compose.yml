@@ -1,0 +1,21 @@
+services:
+  crypto-signal:
+    build: .
+    command: python -u bot.py
+    volumes:
+      - ./config.yml:/app/config.yml
+      - ./default-config.yml:/app/default-config.yml
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - USER_CONFIG_PATH=/app/config.yml
+      - DEFAULT_CONFIG_PATH=/app/default-config.yml
+      - TELEGRAM_BOT_TOKEN=7541095254:AAF_X981BdUpnQdsqfl2YLppJeFutceyjk8
+      - TELEGRAM_CHANNEL_ID=-1002643357491
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'python.*app.py' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

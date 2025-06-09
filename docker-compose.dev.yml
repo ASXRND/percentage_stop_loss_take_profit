@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  crypto-signal:
+    volumes:
+      - .:/app
+    environment:
+      - DEBUG=1
+    stdin_open: true
+    tty: true

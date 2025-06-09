@@ -1,0 +1,8 @@
+.env
+settings.env
+config.yml
+.vscode
+.idea/
+lib/ta-lib/
+.DS_Store
+bybit_futures_signal-bot.tar

@@ -1,0 +1,26 @@
+    # Список торговых пар с индивидуальными настройками
+    SYMBOLS = {
+        'BTC/USDT:USDT': {'price_step': 0.1, 'qty_step': 0.001, 'min_notional': 1},
+        'ETH/USDT:USDT': {'price_step': 0.01, 'qty_step': 0.001, 'min_notional': 1},
+        'SOL/USDT:USDT': {'price_step': 0.001, 'qty_step': 0.01, 'min_notional': 1},
+        'XRP/USDT:USDT': {'price_step': 0.0001, 'qty_step': 0.1, 'min_notional': 1},
+        'ADA/USDT:USDT': {'price_step': 0.0001, 'qty_step': 1, 'min_notional': 1},
+        'DOGE/USDT:USDT': {'price_step': 0.000001, 'qty_step': 1, 'min_notional': 1},
+        'DOT/USDT:USDT': {'price_step': 0.001, 'qty_step': 0.1, 'min_notional': 1},
+        'AVAX/USDT:USDT': {'price_step': 0.01, 'qty_step': 0.01, 'min_notional': 1},
+        'LINK/USDT:USDT': {'price_step': 0.001, 'qty_step': 0.1, 'min_notional': 1},
+        'ATOM/USDT:USDT': {'price_step': 0.001, 'qty_step': 0.1, 'min_notional': 1},
+        'UNI/USDT:USDT': {'price_step': 0.001, 'qty_step': 0.1, 'min_notional': 1},
+        'FIL/USDT:USDT': {'price_step': 0.001, 'qty_step': 0.01, 'min_notional': 1},
+        'ETC/USDT:USDT': {'price_step': 0.001, 'qty_step': 0.01, 'min_notional': 1},
+        'XLM/USDT:USDT': {'price_step': 0.0001, 'qty_step': 1, 'min_notional': 1},
+        'THETA/USDT:USDT': {'price_step': 0.001, 'qty_step': 1, 'min_notional': 1},
+        'VET/USDT:USDT': {'price_step': 0.00001, 'qty_step': 1, 'min_notional': 1},
+        'AAVE/USDT:USDT': {'price_step': 0.01, 'qty_step': 0.001, 'min_notional': 1},
+        'ALGO/USDT:USDT': {'price_step': 0.0001, 'qty_step': 1, 'min_notional': 1},
+        'MASK/USDT:USDT': {'price_step': 0.001, 'qty_step': 0.1, 'min_notional': 1},
+        'SUI/USDT:USDT': {'price_step': 0.0001, 'qty_step': 0.1, 'min_notional': 1},
+        'TON/USDT:USDT': {'price_step': 0.0001, 'qty_step': 0.1, 'min_notional': 1},
+        'XAI/USDT:USDT': {'price_step': 0.0001, 'qty_step': 1, 'min_notional': 1},
+        'PEPE/USDT:USDT': {'price_step': 0.00000001, 'qty_step': 1000, 'min_notional': 1}
+    }

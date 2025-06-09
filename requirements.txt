@@ -1,0 +1,4 @@
+ccxt==4.4.88
+pandas==2.3.0
+python-telegram-bot==22.1
+# numpy и TA-Lib устанавливаются вручную в Dockerfile
