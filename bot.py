@@ -2,7 +2,7 @@
 import pandas as pd
 import ccxt
 import talib
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import threading
 import sys
@@ -260,6 +260,51 @@ class SymbolAnalyzer:
         
         return confirmations, warnings
 
+    def get_higher_tf_trend(self):
+        """Получить тренд на старшем таймфрейме (1h EMA9/EMA21)"""
+        try:
+            ohlcv = exchange.fetch_ohlcv(self.symbol, '1h', limit=50)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            ema_fast = talib.EMA(df['close'], timeperiod=EMA_FAST).iloc[-1]
+            ema_slow = talib.EMA(df['close'], timeperiod=EMA_SLOW).iloc[-1]
+            if ema_fast > ema_slow:
+                return 'UP'
+            elif ema_fast < ema_slow:
+                return 'DOWN'
+            else:
+                return 'FLAT'
+        except Exception as e:
+            print(f"Ошибка получения тренда 1h для {self.symbol}: {e}")
+            return None
+
+    def is_liquidity_time(self):
+        """Проверка, находится ли текущее время в периоде высокой ликвидности (UTC)"""
+        now_utc = datetime.now(timezone.utc)
+        # Пример: не торговать с 2:00 до 7:00 UTC (азиатская ночь)
+        if 2 <= now_utc.hour < 7:
+            return False, now_utc.strftime('%H:%M UTC')
+        return True, now_utc.strftime('%H:%M UTC')
+
+    def get_candle_pattern(self, df, signal_type):
+        """Проверка на разворотные свечные паттерны (engulfing) на последних 3 свечах"""
+        try:
+            last3 = df.tail(3)
+            # Bullish engulfing
+            bull = talib.CDLENGULFING(last3['open'], last3['high'], last3['low'], last3['close']).iloc[-1] > 0
+            # Bearish engulfing
+            bear = talib.CDLENGULFING(last3['open'], last3['high'], last3['low'], last3['close']).iloc[-1] < 0
+            if signal_type == 'BUY' and bull:
+                return 'Бычье поглощение (усиление сигнала)'
+            if signal_type == 'SELL' and bear:
+                return 'Медвежье поглощение (усиление сигнала)'
+            if signal_type == 'BUY' and bear:
+                return 'Медвежье поглощение (ослабление сигнала)'
+            if signal_type == 'SELL' and bull:
+                return 'Бычье поглощение (ослабление сигнала)'
+        except Exception as e:
+            print(f"Ошибка анализа свечного паттерна: {e}")
+        return None
+
     def analyze(self):
         df = self.fetch_ohlcv()
         if df is None or len(df) < 100:  # Увеличено минимальное количество
@@ -283,7 +328,30 @@ class SymbolAnalyzer:
         current_ema_fast = df['ema_fast'].iloc[-1]
         current_ema_slow = df['ema_slow'].iloc[-1]
 
+        # Получаем тренд старшего таймфрейма
+        higher_tf_trend = self.get_higher_tf_trend()
+
+        # Проверка времени суток (ликвидность)
+        is_liq, now_utc_str = self.is_liquidity_time()
+        time_note = f"\n<b>Время (UTC):</b> {now_utc_str}"
+        if not is_liq:
+            print(f"Сигнал по {self.symbol} отклонён: низкая ликвидность (ночь UTC)")
+            return None
+
+        # Расчёт ATR и волатильности
+        atr = talib.ATR(df['high'], df['low'], df['close'], timeperiod=14).iloc[-1]
+        current_price = df['close'].iloc[-1]
+        atr_percent = (atr / current_price) * 100
+        volatility_note = f"\n<b>Волатильность (ATR):</b> {atr_percent:.2f}%"
+        if atr_percent < 0.2:
+            print(f"Сигнал по {self.symbol} отклонён: слишком низкая волатильность ({atr_percent:.2f}%)")
+            return None
+        if atr_percent > 3:
+            print(f"Сигнал по {self.symbol} отклонён: слишком высокая волатильность ({atr_percent:.2f}%)")
+            return None
+
         signal = None
+        trend_note = ""
 
         # Сигнал на покупку с дополнительными условиями
         if (prev_macd < prev_signal_line and current_macd > current_signal_line and 
@@ -291,14 +359,28 @@ class SymbolAnalyzer:
             
             entry_price, sl, tp = self.calculate_dynamic_sl_tp(df, 'BUY')
             confirmations, warnings = self.get_additional_confirmations(df, 'BUY')
+            # Свечной паттерн
+            pattern_note = self.get_candle_pattern(df, 'BUY')
+            if pattern_note:
+                if 'усиление' in pattern_note:
+                    confirmations.append(f"Свечной паттерн: {pattern_note}")
+                elif 'ослабление' in pattern_note:
+                    warnings.append(f"Свечной паттерн: {pattern_note}")
             
             # Проверяем, есть ли критические предупреждения
-            critical_warnings = [w for w in warnings if '⚠️' in w]
-            
-            # Если слишком много предупреждений, пропускаем сигнал
+            critical_warnings = [w for w in warnings if '⚠️' in w or 'ослабление' in w]
             if len(critical_warnings) >= 2:
                 print(f"Сигнал BUY для {self.symbol} отклонен из-за предупреждений: {critical_warnings}")
                 return None
+            
+            # Фильтрация по тренду старшего ТФ
+            if higher_tf_trend == 'DOWN':
+                print(f"BUY сигнал по {self.symbol} против тренда 1h — отклонён")
+                return None
+            elif higher_tf_trend == 'UP':
+                trend_note = "\n<b>Тренд 1h:</b> Восходящий (усиление сигнала)"
+            else:
+                trend_note = "\n<b>Тренд 1h:</b> Неопределён"
             
             # Расчет процентов риска и прибыли
             risk_percent = ((entry_price - sl) / entry_price) * 100
@@ -315,7 +397,8 @@ class SymbolAnalyzer:
                 f"📈 <b>СИГНАЛ НА ПОКУПКУ</b> ({signal_quality})\n"
                 f"🔹 Пара: <b>{self.symbol}</b>\n"
                 f"⏱ Таймфрейм: {TIMEFRAME}\n"
-                f"🕒 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"🕒 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"{time_note}\n\n"
                 f"💰 <b>Цена входа</b>: {entry_price:.6f}\n"
                 f"🛑 <b>Стоп-лосс</b>: {sl:.6f} (-{risk_percent:.2f}%)\n"
                 f"🎯 <b>Тейк-профит</b>: {tp:.6f} (+{reward_percent:.2f}%)\n"
@@ -323,7 +406,8 @@ class SymbolAnalyzer:
                 f"📊 <b>Техническое обоснование</b>:\n"
                 f"- MACD пересечение сигнальной линии ↗️\n"
                 f"- EMA9 выше EMA21 (восходящий тренд)\n"
-                f"- Динамический расчет SL/TP\n\n"
+                f"- Динамический расчет SL/TP\n"
+                f"{trend_note}{volatility_note}\n\n"
                 f"✅ <b>Подтверждения</b>:\n{confirmation_text}\n"
                 + (f"\n⚠️ <b>Предупреждения</b>:\n{warning_text}\n" if warnings else "") +
                 f"\n#BUY #{self.symbol.replace('/', '')}"
@@ -335,14 +419,28 @@ class SymbolAnalyzer:
             
             entry_price, sl, tp = self.calculate_dynamic_sl_tp(df, 'SELL')
             confirmations, warnings = self.get_additional_confirmations(df, 'SELL')
+            # Свечной паттерн
+            pattern_note = self.get_candle_pattern(df, 'SELL')
+            if pattern_note:
+                if 'усиление' in pattern_note:
+                    confirmations.append(f"Свечной паттерн: {pattern_note}")
+                elif 'ослабление' in pattern_note:
+                    warnings.append(f"Свечной паттерн: {pattern_note}")
             
             # Проверяем, есть ли критические предупреждения
-            critical_warnings = [w for w in warnings if '⚠️' in w]
-            
-            # Если слишком много предупреждений, пропускаем сигнал
+            critical_warnings = [w for w in warnings if '⚠️' in w or 'ослабление' in w]
             if len(critical_warnings) >= 2:
                 print(f"Сигнал SELL для {self.symbol} отклонен из-за предупреждений: {critical_warnings}")
                 return None
+            
+            # Фильтрация по тренду старшего ТФ
+            if higher_tf_trend == 'UP':
+                print(f"SELL сигнал по {self.symbol} против тренда 1h — отклонён")
+                return None
+            elif higher_tf_trend == 'DOWN':
+                trend_note = "\n<b>Тренд 1h:</b> Нисходящий (усиление сигнала)"
+            else:
+                trend_note = "\n<b>Тренд 1h:</b> Неопределён"
             
             # Расчет процентов риска и прибыли
             risk_percent = ((sl - entry_price) / entry_price) * 100
@@ -359,7 +457,8 @@ class SymbolAnalyzer:
                 f"📉 <b>СИГНАЛ НА ПРОДАЖУ</b> ({signal_quality})\n"
                 f"🔹 Пара: <b>{self.symbol}</b>\n"
                 f"⏱ Таймфрейм: {TIMEFRAME}\n"
-                f"🕒 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"🕒 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"{time_note}\n\n"
                 f"💰 <b>Цена входа</b>: {entry_price:.6f}\n"
                 f"🛑 <b>Стоп-лосс</b>: {sl:.6f} (+{risk_percent:.2f}%)\n"
                 f"🎯 <b>Тейк-профит</b>: {tp:.6f} (-{reward_percent:.2f}%)\n"
@@ -367,7 +466,8 @@ class SymbolAnalyzer:
                 f"📊 <b>Техническое обоснование</b>:\n"
                 f"- MACD пересечение сигнальной линии ↘️\n"
                 f"- EMA9 ниже EMA21 (нисходящий тренд)\n"
-                f"- Динамический расчет SL/TP\n\n"
+                f"- Динамический расчет SL/TP\n"
+                f"{trend_note}{volatility_note}\n\n"
                 f"✅ <b>Подтверждения</b>:\n{confirmation_text}\n"
                 + (f"\n⚠️ <b>Предупреждения</b>:\n{warning_text}\n" if warnings else "") +
                 f"\n#SELL #{self.symbol.replace('/', '')}"
