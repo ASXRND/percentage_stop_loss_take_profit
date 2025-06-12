@@ -13,6 +13,7 @@ import asyncio
 import concurrent.futures
 import signal
 import numpy as np
+import psycopg2
 
 # Глобальный event loop и executor
 loop = None
@@ -24,13 +25,11 @@ executor = None
 TELEGRAM_TOKEN = '7541095254:AAF_X981BdUpnQdsqfl2YLppJeFutceyjk8'
 TELEGRAM_CHAT_ID = '-1002643357491'
 
-# Список торговых пар для мониторинга
+# Новый список только для фьючерсов Bybit (пример, можно расширить)
 SYMBOLS = [
-    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
-    'DOGE/USDT', 'DOT/USDT', 'AVAX/USDT', 'LINK/USDT', 'ATOM/USDT',
-    'UNI/USDT', 'FIL/USDT', 'ETC/USDT', 'XLM/USDT', 'THETA/USDT',
-    'VET/USDT', 'AAVE/USDT', 'ALGO/USDT', 'MASK/USDT','SUI/USDT', 
-    'TON/USDT', 'XAI/USDT', 'PEPE/USDT'
+    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT',
+    'DOGE/USDT', 'WIF/USDT', 'ANIME/USDT', 'LINK/USDT',
+    'SUI/USDT', 'AXL/USDT', 'AAVE/USDT', 'ADA/USDT', 'TON/USDT'
 ]
 
 # Параметры индикаторов и таймфрейма
@@ -72,6 +71,14 @@ except Exception as e:
     print(f"Ошибка подключения Telegram бота: {e}")
     sys.exit(1)
 
+DB_CONFIG = {
+    "host": "192.168.0.121",
+    "port": 5432,
+    "user": "asx",
+    "password": "asxAdmin1",
+    "dbname": "signals_db"
+}
+
 # ===== УЛУЧШЕННЫЙ КЛАСС ДЛЯ АНАЛИЗА =====
 class SymbolAnalyzer:
     def __init__(self, symbol):
@@ -83,7 +90,7 @@ class SymbolAnalyzer:
 
     def fetch_ohlcv(self):
         try:
-            ohlcv = exchange.fetch_ohlcv(self.symbol, TIMEFRAME, limit=200)  # Увеличено до 200
+            ohlcv = exchange.fetch_ohlcv(self.symbol, TIMEFRAME, limit=200, params={'category': 'linear'})  # Явно указываем фьючерсы
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             return df.set_index('timestamp')
@@ -263,7 +270,7 @@ class SymbolAnalyzer:
     def get_higher_tf_trend(self):
         """Получить тренд на старшем таймфрейме (1h EMA9/EMA21)"""
         try:
-            ohlcv = exchange.fetch_ohlcv(self.symbol, '1h', limit=50)
+            ohlcv = exchange.fetch_ohlcv(self.symbol, '1h', limit=50, params={'category': 'linear'})  # Явно указываем фьючерсы
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             ema_fast = talib.EMA(df['close'], timeperiod=EMA_FAST).iloc[-1]
             ema_slow = talib.EMA(df['close'], timeperiod=EMA_SLOW).iloc[-1]
@@ -305,9 +312,19 @@ class SymbolAnalyzer:
             print(f"Ошибка анализа свечного паттерна: {e}")
         return None
 
+    def get_dynamic_atr_threshold(self, df):
+        """Вычисляет среднее ATR/цена за неделю и возвращает динамический порог (например, 0.5 от среднего)"""
+        atr_week = talib.ATR(df['high'], df['low'], df['close'], timeperiod=14).tail(2016)  # 2016 5m свечей ≈ 1 неделя
+        price_week = df['close'].tail(2016)
+        atr_price_week = (atr_week / price_week).dropna()
+        if len(atr_price_week) == 0:
+            return 0.001  # fallback
+        mean_atr_price = atr_price_week.mean() * 100  # в процентах
+        return mean_atr_price * 0.5, mean_atr_price
+
     def analyze(self):
         df = self.fetch_ohlcv()
-        if df is None or len(df) < 100:  # Увеличено минимальное количество
+        if df is None or len(df) < 100:
             return None
 
         # Вычисление индикаторов
@@ -338,13 +355,16 @@ class SymbolAnalyzer:
             print(f"Сигнал по {self.symbol} отклонён: низкая ликвидность (ночь UTC)")
             return None
 
+        # Динамический порог ATR/цена
+        dynamic_threshold, mean_atr_price = self.get_dynamic_atr_threshold(df)
+
         # Расчёт ATR и волатильности
         atr = talib.ATR(df['high'], df['low'], df['close'], timeperiod=14).iloc[-1]
         current_price = df['close'].iloc[-1]
         atr_percent = (atr / current_price) * 100
-        volatility_note = f"\n<b>Волатильность (ATR):</b> {atr_percent:.2f}%"
-        if atr_percent < 0.2:
-            print(f"Сигнал по {self.symbol} отклонён: слишком низкая волатильность ({atr_percent:.2f}%)")
+        volatility_note = f"\n<b>Волатильность (ATR):</b> {atr_percent:.2f}% (среднее: {mean_atr_price:.2f}%)"
+        if atr_percent < dynamic_threshold:
+            print(f"Сигнал по {self.symbol} отклонён: низкая волатильность {atr_percent:.2f}% (порог: {dynamic_threshold:.2f}%, среднее: {mean_atr_price:.2f}%)")
             return None
         if atr_percent > 3:
             print(f"Сигнал по {self.symbol} отклонён: слишком высокая волатильность ({atr_percent:.2f}%)")
@@ -388,7 +408,7 @@ class SymbolAnalyzer:
             rr_ratio = reward_percent / risk_percent if risk_percent > 0 else 0
             # Новое: предположительное движение цены
             move_percent = ((tp - entry_price) / entry_price) * 100
-            move_note = f"\n<b>Потенциальное движение:</b> +{move_percent:.2f}%"
+            move_note = f"\n<b>Потенциальное движение:</b> +{move_percent:.2f}%"  # всегда с плюсом для LONG
             
             # Определяем качество сигнала
             signal_quality = "🟢 СИЛЬНЫЙ" if len(confirmations) >= 3 else "🟡 СРЕДНИЙ" if len(confirmations) >= 2 else "🔴 СЛАБЫЙ"
@@ -396,8 +416,11 @@ class SymbolAnalyzer:
             confirmation_text = "\n".join([f"- {conf}" for conf in confirmations]) if confirmations else "- Нет подтверждений"
             warning_text = "\n".join([f"- {warn}" for warn in warnings]) if warnings else ""
             
+            # Определяем направление сделки
+            direction = "<b>ЛОНГ (LONG)</b>"  # для BUY
+            
             signal = (
-                f"📈 <b>СИГНАЛ НА ПОКУПКУ</b> ({signal_quality})\n"
+                f" 2️⃣ 📈 {direction} <b>СИГНАЛ НА ПОКУПКУ</b> ({signal_quality})\n"
                 f"🔹 Пара: <b>{self.symbol}</b>\n"
                 f"⏱ Таймфрейм: {TIMEFRAME}\n"
                 f"🕒 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -407,7 +430,7 @@ class SymbolAnalyzer:
                 f"🎯 <b>Тейк-профит</b>: {tp:.6f} (+{reward_percent:.2f}%)\n"
                 f"⚡️ {move_note}\n"
                 f"⚖️ <b>R/R соотношение</b>: 1:{rr_ratio:.2f}\n\n"
-                f"📊 <b>Техническое обоснование</b>:\n"
+                f" 2️⃣ 📊 <b>Техническое обоснование</b>:\n"
                 f"- MACD пересечение сигнальной линии ↗️\n"
                 f"- EMA9 выше EMA21 (восходящий тренд)\n"
                 f"- Динамический расчет SL/TP\n"
@@ -451,7 +474,7 @@ class SymbolAnalyzer:
             reward_percent = ((entry_price - tp) / entry_price) * 100
             rr_ratio = reward_percent / risk_percent if risk_percent > 0 else 0
             move_percent = ((tp - entry_price) / entry_price) * 100
-            move_note = f"\n<b>Потенциальное движение:</b> {move_percent:.2f}%"
+            move_note = f"\n<b>Потенциальное движение:</b> {move_percent:+.2f}%"  # всегда с знаком
             
             # Определяем качество сигнала
             signal_quality = "🟢 СИЛЬНЫЙ" if len(confirmations) >= 3 else "🟡 СРЕДНИЙ" if len(confirmations) >= 2 else "🔴 СЛАБЫЙ"
@@ -459,15 +482,18 @@ class SymbolAnalyzer:
             confirmation_text = "\n".join([f"- {conf}" for conf in confirmations]) if confirmations else "- Нет подтверждений"
             warning_text = "\n".join([f"- {warn}" for warn in warnings]) if warnings else ""
             
+            # Определяем направление сделки
+            direction = "<b>ШОРТ (SHORT)</b>"  # для SELL
+            
             signal = (
-                f"📉 <b>СИГНАЛ НА ПРОДАЖУ</b> ({signal_quality})\n"
+                f" 2️⃣ 📉 {direction} <b>СИГНАЛ НА ПРОДАЖУ</b> ({signal_quality})\n"
                 f"🔹 Пара: <b>{self.symbol}</b>\n"
                 f"⏱ Таймфрейм: {TIMEFRAME}\n"
                 f"🕒 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                 f"{time_note}\n\n"
                 f"💰 <b>Цена входа</b>: {entry_price:.6f}\n"
                 f"🛑 <b>Стоп-лосс</b>: {sl:.6f} (+{risk_percent:.2f}%)\n"
-                f"🎯 <b>Тейк-профит</b>: {tp:.6f} ({move_percent:.2f}%)\n"
+                f"🎯 <b>Тейк-профит</b>: {tp:.6f} ({move_percent:+.2f}%)\n"  # всегда с плюсом/минусом
                 f"⚡️ {move_note}\n"
                 f"⚖️ <b>R/R соотношение</b>: 1:{rr_ratio:.2f}\n\n"
                 f"📊 <b>Техническое обоснование</b>:\n"
@@ -511,11 +537,59 @@ def send_telegram_message_safe(message):
     except Exception as e:
         print(f"Ошибка безопасной отправки в Telegram: {e}")
 
+# Функция для сохранения сигнала в базу данных
+def save_signal_to_db(symbol, direction, entry_price, stop_loss, take_profit, risk_percent, reward_percent, rr_ratio, move_percent, signal_quality, confirmations, warnings, signal_time):
+    """Сохраняет сигнал в базу данных Postgres. Если таблицы нет — создаёт её."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        # Проверяем, существует ли таблица
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'signals_sl_tp'
+            )
+        """)
+        exists = cur.fetchone()[0]
+        if not exists:
+            cur.execute('''
+                CREATE TABLE signals_sl_tp (
+                    id SERIAL PRIMARY KEY,
+                    symbol VARCHAR(32),
+                    direction VARCHAR(8),
+                    entry_price NUMERIC,
+                    stop_loss NUMERIC,
+                    take_profit NUMERIC,
+                    risk_percent NUMERIC,
+                    reward_percent NUMERIC,
+                    rr_ratio NUMERIC,
+                    move_percent NUMERIC,
+                    signal_quality VARCHAR(16),
+                    confirmations TEXT,
+                    warnings TEXT,
+                    signal_time TIMESTAMP
+                )
+            ''')
+            conn.commit()
+        cur.execute('''
+            INSERT INTO signals_sl_tp (
+                symbol, direction, entry_price, stop_loss, take_profit, risk_percent, reward_percent, rr_ratio, move_percent, signal_quality, confirmations, warnings, signal_time
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (
+            symbol, direction, entry_price, stop_loss, take_profit, risk_percent, reward_percent, rr_ratio, move_percent, signal_quality, confirmations, warnings, signal_time
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Ошибка сохранения сигнала в БД: {e}")
+
 # ===== ФУНКЦИЯ МОНИТОРИНГА ПАРЫ =====
 def monitor_symbol(symbol, output_lock):
     analyzer = SymbolAnalyzer(symbol)
     while True:
         try:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Мониторинг {symbol}...", flush=True)
             signal = analyzer.analyze()
             if signal:
                 with output_lock:
@@ -523,6 +597,39 @@ def monitor_symbol(symbol, output_lock):
                     print(signal.replace('<b>', '').replace('</b>', ''))
                     print("="*80 + "\n")
                     send_telegram_message_safe(signal)
+                    # --- Сохраняем сигнал в БД ---
+                    # Парсим основные параметры из analyzer и текста сигнала
+                    direction = 'LONG' if 'ЛОНГ' in signal else 'SHORT'
+                    entry_price = analyzer.last_price
+                    stop_loss = analyzer.stop_loss
+                    take_profit = analyzer.take_profit
+                    # Для risk_percent, reward_percent, rr_ratio, move_percent, signal_quality, confirmations, warnings
+                    # используем значения из analyze (их можно возвращать из analyze как кортеж, но сейчас парсим из текста)
+                    # Для простоты: ищем по ключевым словам
+                    import re
+                    def extract_percent(pattern, text):
+                        m = re.search(pattern, text)
+                        return float(m.group(1).replace(',', '.')) if m else None
+                    risk_percent = extract_percent(r'Стоп-лосс.*?([\-\+]?[0-9.]+)%', signal)
+                    reward_percent = extract_percent(r'Тейк-профит.*?([\-\+]?[0-9.]+)%', signal)
+                    rr_ratio = extract_percent(r'R/R соотношение.*?1:([0-9.]+)', signal)
+                    move_percent = extract_percent(r'Потенциальное движение:</b> ?([\-\+]?[0-9.]+)%', signal)
+                    signal_quality = 'СИЛЬНЫЙ' if 'СИЛЬНЫЙ' in signal else ('СРЕДНИЙ' if 'СРЕДНИЙ' in signal else 'СЛАБЫЙ')
+                    # Подтверждения и предупреждения
+                    confirmations = ''
+                    warnings = ''
+                    conf_match = re.search(r'Подтверждения</b>:\n(.*?)(?:\n⚠️|\n#|$)', signal, re.DOTALL)
+                    if conf_match:
+                        confirmations = conf_match.group(1).strip()
+                    warn_match = re.search(r'Предупреждения</b>:\n(.*?)(?:\n#|$)', signal, re.DOTALL)
+                    if warn_match:
+                        warnings = warn_match.group(1).strip()
+                    signal_time = datetime.now(timezone.utc)
+                    save_signal_to_db(
+                        symbol, direction, entry_price, stop_loss, take_profit,
+                        risk_percent, reward_percent, rr_ratio, move_percent,
+                        signal_quality, confirmations, warnings, signal_time
+                    )
                 time.sleep(CHECK_INTERVAL * 3)  # Увеличена пауза после сигнала
             time.sleep(CHECK_INTERVAL)
         except Exception as e:
@@ -580,3 +687,33 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Глобальное логирование средней волатильности по рынку
+import threading
+import time
+
+def log_market_volatility():
+    while True:
+        atrs = []
+        prices = []
+        for symbol in SYMBOLS:
+            try:
+                analyzer = SymbolAnalyzer(symbol)
+                df = analyzer.fetch_ohlcv()
+                if df is not None and len(df) > 100:
+                    atr = talib.ATR(df['high'], df['low'], df['close'], timeperiod=14).iloc[-1]
+                    price = df['close'].iloc[-1]
+                    atrs.append(atr)
+                    prices.append(price)
+            except Exception as e:
+                print(f"[Волатильность] Ошибка по {symbol}: {e}")
+        if atrs and prices:
+            mean_vol = np.mean([a/p for a,p in zip(atrs, prices)]) * 100
+            print(f"[Волатильность] Средняя ATR/цена по рынку: {mean_vol:.3f}%")
+        else:
+            print("[Волатильность] Недостаточно данных для расчёта средней волатильности.")
+        time.sleep(3600)  # раз в час
+
+# Запуск логирования волатильности в отдельном потоке
+vol_thread = threading.Thread(target=log_market_volatility, daemon=True)
+vol_thread.start()

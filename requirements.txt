@@ -1,4 +1,18 @@
-ccxt==4.4.88
-pandas==2.3.0
-python-telegram-bot==22.1
-# numpy и TA-Lib устанавливаются вручную в Dockerfile
+certifi==2025.4.26
+charset-normalizer==3.4.2
+discord-webhook==1.4.1
+docopt==0.6.2
+idna==3.10
+pipreqs==0.4.13
+psycopg2-binary==2.9.10
+requests==2.32.3
+structlog==25.4.0
+urllib3==2.4.0
+wheel==0.45.1
+yarg==0.1.10
+pandas
+ccxt
+# TA-Lib
+python-telegram-bot
+asyncio
+numpy
